@@ -52,7 +52,9 @@ let _eventCounter = 0; // unique fallback for eventIds when the CLI omits an ID
 const MAX_CONCURRENT_SOCKETS = Number(process.env.MAX_CONCURRENT_SOCKETS || 10);
 
 wss.on("connection", (ws) => {
-  if (wss.clients.size > MAX_CONCURRENT_SOCKETS) {
+  // wss.clients already includes this new socket when the 'connection' handler fires,
+  // so subtract 1 to get the count of previously-established sessions.
+  if (wss.clients.size - 1 >= MAX_CONCURRENT_SOCKETS) {
     ws.close(CLOSE_APP_ERROR, "Too many concurrent sessions.");
     return;
   }
@@ -166,7 +168,13 @@ wss.on("connection", (ws) => {
     // proc fires 'error' without 'close' (e.g. ENOENT), leaving remaining > 0 forever.
     const killTimer = setTimeout(() => {
       procs.forEach(killProc);
-      if (!closed) { try { ws.close(CLOSE_APP_ERROR, "Hard timeout reached."); } catch {} }
+      if (!closed) {
+        try { ws.close(CLOSE_APP_ERROR, "Hard timeout reached."); } catch {}
+        // Call cleanup() unconditionally: if ws.close() throws or the 'close'
+        // event never fires, sessionBaseDir and poll timers would otherwise leak.
+        // cleanup() is idempotent (nulls sessionBaseDir after first rmSync).
+        cleanup();
+      }
     }, HARD_TIMEOUT_MS);
     timers.push(killTimer);
 
@@ -193,7 +201,10 @@ wss.on("connection", (ws) => {
       try {
         if (fs.existsSync(outFile)) {
           const c = fs.readFileSync(outFile, "utf8");
-          if (c && c !== lastCode) {
+          // Only forward complete HTML — a concurrent write from the claude agent
+          // can produce a partial read on POSIX (non-atomic readFileSync). Requiring
+          // </html> as a terminator avoids sending a broken intermediate snapshot.
+          if (c && c !== lastCode && /<\/html>/i.test(c)) {
             lastCode = c;
             send({ type: "setCode", value: c, variantIndex: vi });
           }
@@ -258,9 +269,16 @@ wss.on("connection", (ws) => {
 
     proc.on("close", (code) => {
       clearInterval(poll);
-      // Flush any stdout that didn't end with a newline (the last JSON line from
-      // claude --output-format stream-json is sometimes not newline-terminated).
-      if (buf.trim()) { try { handleLine(buf.trim(), vi); } catch {} }
+      // If proc.on('error') already claimed this variant (finished=true), discard
+      // the remaining stdout buffer — those events would arrive after variantError
+      // and create stale tool/assistant entries in the version-history UI.
+      if (finished) {
+        buf = "";
+      } else if (buf.trim()) {
+        // Flush any stdout that didn't end with a newline (the last JSON line from
+        // claude --output-format stream-json is sometimes not newline-terminated).
+        try { handleLine(buf.trim(), vi); } catch {}
+      }
       buf = "";
       // Bail out early if the socket is already closed or proc.on('error') already
       // reported this variant — avoids a stale setCode send and duplicate messages.

@@ -315,6 +315,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const commit = state.commits[hash];
       if (!commit) return state;
       if (commit.isCommitted) return state;
+      // Malformed backend message (variantCount:'0') would make Math.min return -1,
+      // leaving selectedVariantIndex=-1 and breaking every downstream variants[] read.
+      if (!count || count < 1) return state;
 
       // Resize variants array to match backend count
       const currentVariants = commit.variants;

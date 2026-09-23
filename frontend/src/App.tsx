@@ -463,8 +463,12 @@ function App() {
       onSetCode: (code, variantIndex) => {
         setCommitCode(commit.hash, variantIndex, code);
       },
-      onStatusUpdate: (line, variantIndex) =>
-        appendExecutionConsole(variantIndex, line),
+      onStatusUpdate: (line, variantIndex) => {
+        // Guard against stale buffered messages from a prior WebSocket that
+        // arrive after resetExecutionConsoles() clears the new generation's log.
+        if (generationIdRef.current !== generationId) return;
+        appendExecutionConsole(variantIndex, line);
+      },
       onVariantComplete: (variantIndex) => {
         // Guard 1: project reset.
         if (!useProjectStore.getState().commits[commit.hash]) return;

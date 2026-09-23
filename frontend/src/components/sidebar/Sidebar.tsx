@@ -148,6 +148,7 @@ function Sidebar({
         setUpdateImages([...updateImages, ...newImages]);
       } catch (error) {
         console.error("Error reading files:", error);
+        toast.error("Could not read the dropped image. Please try again.");
       }
     },
     [updateImages, setUpdateImages]
@@ -435,8 +436,13 @@ function Sidebar({
 
         {/* Retry any AI-generated version. A completed older version can be
             retried once no other request is running; the regenerated edit
-            branches from that version's original parent. */}
+            branches from that version's original parent.
+            Exception: an ai_create commit viewed as an older version must NOT
+            show Retry — it would call doCreate() → reset() and silently wipe
+            all subsequent version history. Only ai_edit commits have a safe
+            "branch from parent" path when viewed in history. */}
         {canRegenerate &&
+          !(isViewingOlderVersion && currentCommit?.type === 'ai_create') &&
           (appState === AppState.CODE_READY ||
             (head === latestCommitHash &&
               appState !== AppState.CODING &&
