@@ -297,22 +297,35 @@ function App() {
     wsRef.current?.close?.(USER_CLOSE_WEB_SOCKET_CODE);
   };
 
+  // User-initiated cancel (from the "Cancel All Generations" button in Sidebar).
+  // Shows a toast — use cancelCodeGeneration() directly for programmatic cancels.
+  const cancelCodeGenerationUserInitiated = () => {
+    toast.success("Code generation cancelled");
+    wsRef.current?.close?.(USER_CLOSE_WEB_SOCKET_CODE);
+  };
+
   // Used for user-initiated cancellation and failed edit rollbacks
   const cancelCodeGenerationAndReset = (commit: Commit) => {
     // When the current commit is the first version, reset the entire app state
     if (commit.type === "ai_create") {
       reset();
     } else {
-      // Otherwise, remove current commit from commits
-      removeCommit(commit.hash);
+      // Remove the in-progress edit commit and revert to the parent
+      removeCommit(commit.hash); // atomically moves head to parentHash
 
-      // Revert to parent commit
       const parentCommitHash = commit.parentHash;
       if (parentCommitHash) {
         setHead(parentCommitHash);
       } else {
-        throw new Error("Parent commit not found");
+        // ai_edit commits always have a parentHash; this branch should be unreachable
+        toast.error("Could not revert: parent version not found.");
+        setAppState(AppState.CODE_READY);
+        return;
       }
+
+      // Clear any stale select-and-edit state captured during this edit attempt
+      disableInSelectAndEditMode();
+      setSelectedElement(null);
 
       setAppState(AppState.CODE_READY);
     }
@@ -450,6 +463,11 @@ function App() {
       onStatusUpdate: (line, variantIndex) =>
         appendExecutionConsole(variantIndex, line),
       onVariantComplete: (variantIndex) => {
+        // Guard 1: project reset.
+        if (!useProjectStore.getState().commits[commit.hash]) return;
+        // Guard 2: superseded generation — don't clear the new generation's UI state
+        // (e.g. don't wipe the update instruction that the user typed for the new request).
+        if (generationIdRef.current !== generationId) return;
         console.log(`Variant ${variantIndex} complete event received`);
         updateVariantStatus(commit.hash, variantIndex, "complete");
         const currentCode =
@@ -558,14 +576,16 @@ function App() {
       onCancel: (reason, errorMessage) => {
         // Guard 1: project reset — commits are cleared; bail out.
         if (!useProjectStore.getState().commits[commit.hash]) return;
+
+        // Always close in-flight events for the superseded commit — even if guard 2
+        // fires, we still need to clean up running agent events so they don't show
+        // as eternal spinners in the version history UI.
+        finishInFlightEvents(reason === "user_cancelled" ? "complete" : "error");
+
         // Guard 2: superseded by a newer generation — let the new one own state.
         if (generationIdRef.current !== generationId) return;
 
-        // Close any running agent events when the socket ends without per-event
-        // terminal messages, otherwise they remain stuck in "running" state.
-        finishInFlightEvents(reason === "request_failed" ? "error" : "complete");
-
-        if (reason === "request_failed" && commit.type === "ai_create") {
+        if ((reason === "request_failed" || reason === "connection_error") && commit.type === "ai_create") {
           const latestCreateCommit = useProjectStore.getState().commits[commit.hash];
           latestCreateCommit?.variants.forEach((variant, variantIndex) => {
             if (variant.status === "generating") {
@@ -599,6 +619,16 @@ function App() {
         // Guard 2: a newer generation has already started; don't override its state.
         if (generationIdRef.current !== generationId) return;
         finishInFlightEvents("complete");
+        // If ALL variants errored the backend still closes with CLOSE_OK (1000) via
+        // finishOne() → ws.close(CLOSE_OK). Guard against landing in CODE_READY with
+        // an empty editor — reset to INITIAL so the user can start fresh instead.
+        const anyCodeProduced = useProjectStore
+          .getState()
+          .commits[commit.hash]?.variants.some((v) => v.code.trim().length > 0);
+        if (!anyCodeProduced) {
+          reset();
+          return;
+        }
         setAppState(AppState.CODE_READY);
       },
       // Suppress the "Code generation cancelled" toast for programmatic cancels
@@ -941,7 +971,7 @@ function App() {
                   <Sidebar
                     doUpdate={doUpdate}
                     regenerate={regenerate}
-                    cancelCodeGeneration={cancelCodeGeneration}
+                    cancelCodeGeneration={cancelCodeGenerationUserInitiated}
                     designSystem={{
                       designSystems,
                       selectedDesignSystemId: settings.selectedDesignSystemId,

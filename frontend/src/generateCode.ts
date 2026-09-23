@@ -80,7 +80,13 @@ export function generateCode(
   });
 
   ws.addEventListener("message", async (event: MessageEvent) => {
-    const response = JSON.parse(event.data) as WebSocketResponse;
+    let response: WebSocketResponse;
+    try {
+      response = JSON.parse(event.data) as WebSocketResponse;
+    } catch {
+      console.warn("Received non-JSON WebSocket frame — ignoring", event.data);
+      return;
+    }
     if (response.type === "chunk") {
       callbacks.onChange(response.value || "", response.variantIndex);
     } else if (response.type === "status") {
@@ -132,7 +138,14 @@ export function generateCode(
       }
       callbacks.onCancel("connection_error", event.reason || ERROR_MESSAGE);
     } else {
-      callbacks.onComplete();
+      // If the server sent a type:'error' message before closing cleanly (code 1000),
+      // the generation failed despite the clean close code. Treat as a request failure
+      // rather than a success so we don't transition to CODE_READY with a broken state.
+      if (errorToastShown) {
+        callbacks.onCancel("request_failed");
+      } else {
+        callbacks.onComplete();
+      }
     }
   });
 

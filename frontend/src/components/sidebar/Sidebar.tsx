@@ -457,8 +457,13 @@ function Sidebar({
           </div>
         )}
 
-        {/* Show cancel button when coding */}
-        {appState === AppState.CODING && !isSelectedVariantComplete && (
+        {/* Show cancel button when coding — but only for the live (latest) commit and
+            only while at least one variant is still generating. When the selected variant
+            completes early the button must stay visible because the other variant is still
+            running; likewise, don't show it when the user is browsing an older version. */}
+        {appState === AppState.CODING &&
+          head === latestCommitHash &&
+          currentCommit?.variants.some((v) => v.status === "generating") && (
           <div className="flex w-full">
             <Button
               onClick={cancelCodeGeneration}

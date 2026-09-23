@@ -282,7 +282,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   ) =>
     set((state) => {
       const commit = state.commits[hash];
-      if (!commit) return state; // No change if commit doesn't exist
+      if (!commit) return state;
+      if (commit.isCommitted) return state;
 
       return {
         commits: {

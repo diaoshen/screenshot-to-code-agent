@@ -158,9 +158,12 @@ wss.on("connection", (ws) => {
       if (remaining <= 0 && !closed) { try { ws.close(CLOSE_OK); } catch {} }
     };
 
-    // Hard wall-clock timeout kills every variant.
+    // Hard wall-clock timeout kills every variant and force-closes the socket.
+    // The normal path (proc 'close' → finishVariant → ws.close) can miss if a
+    // proc fires 'error' without 'close' (e.g. ENOENT), leaving remaining > 0 forever.
     const killTimer = setTimeout(() => {
       procs.forEach(killProc);
+      if (!closed) { try { ws.close(CLOSE_APP_ERROR, "Hard timeout reached."); } catch {} }
     }, HARD_TIMEOUT_MS);
     timers.push(killTimer);
 
@@ -197,8 +200,8 @@ wss.on("connection", (ws) => {
         if (fs.existsSync(scoreFile)) {
           const stamp = fs.statSync(scoreFile).mtimeMs;
           if (stamp !== lastScoreStamp) {
-            lastScoreStamp = stamp;
             const s = JSON.parse(fs.readFileSync(scoreFile, "utf8"));
+            lastScoreStamp = stamp; // commit stamp only after successful parse
             let msg;
             if (s.error) msg = `Render failed: ${s.error}`;
             else if (s.score == null) msg = "Rendered (no target to score against).";
@@ -247,7 +250,7 @@ wss.on("connection", (ws) => {
       clearInterval(poll);
       if (closed) return;
       send({ type: "variantError", value: `Failed to start claude CLI: ${e.message}`, variantIndex: vi });
-      finishVariant();
+      finishVariant(); // sets finished=true — close handler will skip its own send
     });
 
     proc.on("close", (code) => {
@@ -259,6 +262,9 @@ wss.on("connection", (ws) => {
         }
       } catch {}
       if (closed) return;
+      // If proc.on('error') already fired for this variant, 'finished' is true.
+      // Skip the duplicate variantError send — the error was already reported.
+      if (finished) { finishVariant(); return; }
       let produced = false;
       try { produced = fs.existsSync(outFile) && fs.statSync(outFile).size > 0; } catch {}
       if (code === 0 || produced) send({ type: "variantComplete", variantIndex: vi });
