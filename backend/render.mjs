@@ -18,11 +18,18 @@ const cwd = process.cwd();
 const htmlPath = path.join(cwd, "output.html");
 const targetPath = path.join(cwd, "target.png");
 
+function writeScoreAtomic(data) {
+  const target = path.join(cwd, "score.json");
+  const tmp = target + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(data));
+  fs.renameSync(tmp, target);
+}
+
 function fail(msg) {
   // Never throw: write a zero score so the agent loop gets feedback instead of a crash.
   console.error("render.mjs error:", msg);
   const out = { score: 0, diffPixels: -1, width: 0, height: 0, error: String(msg) };
-  try { fs.writeFileSync(path.join(cwd, "score.json"), JSON.stringify(out)); } catch {}
+  try { writeScoreAtomic(out); } catch {}
   console.log(`SIMILARITY_SCORE=0.00% (render failed: ${msg})`);
   process.exit(0);
 }
@@ -57,7 +64,7 @@ try {
   // No target to compare against (e.g. an update with no original screenshot): render only.
   if (!hasTarget) {
     const out = { score: null, diffPixels: null, width: 0, height: 0, note: "no target.png to score against" };
-    fs.writeFileSync(path.join(cwd, "score.json"), JSON.stringify(out));
+    writeScoreAtomic(out);
     console.log("RENDERED output.html (no target.png to score against).");
     process.exit(0);
   }
@@ -85,9 +92,15 @@ try {
 
   const score = Math.max(0, 100 * (1 - diffPixels / (W * H)));
   const out = { score: +score.toFixed(2), diffPixels, width: W, height: H };
-  fs.writeFileSync(path.join(cwd, "score.json"), JSON.stringify(out));
+  writeScoreAtomic(out);
   console.log(`SIMILARITY_SCORE=${out.score}% diffPixels=${diffPixels} (${W}x${H})`);
 } catch (e) {
-  try { if (browser) await browser.close(); } catch {}
+  // Race-timeout browser.close() so a hung browser doesn't stall the agent loop.
+  try {
+    if (browser) await Promise.race([
+      browser.close(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 5000)),
+    ]);
+  } catch {}
   fail(e?.message || e);
 }

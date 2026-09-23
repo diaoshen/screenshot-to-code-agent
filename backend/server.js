@@ -30,9 +30,9 @@ const CLOSE_OK = 1000;
 const CLOSE_APP_ERROR = 4332;
 
 const app = express();
-// Frontend runs cross-origin (http://localhost:5173). Allow it.
+// Frontend runs cross-origin (http://localhost:5173). Restrict to that origin only.
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Origin", "http://localhost:5173");
   res.header("Access-Control-Allow-Headers", "*");
   res.header("Access-Control-Allow-Methods", "*");
   if (req.method === "OPTIONS") return res.sendStatus(204);
@@ -48,8 +48,13 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/generate-code" });
 
 let sessionCounter = 0;
+const MAX_CONCURRENT_SOCKETS = Number(process.env.MAX_CONCURRENT_SOCKETS || 10);
 
 wss.on("connection", (ws) => {
+  if (wss.clients.size > MAX_CONCURRENT_SOCKETS) {
+    ws.close(CLOSE_APP_ERROR, "Too many concurrent sessions.");
+    return;
+  }
   const procs = [];
   const timers = [];
   let started = false;
@@ -100,18 +105,24 @@ wss.on("connection", (ws) => {
     // Decode the original screenshot (prompt.images[0]) once, if present.
     let targetBuf = null;
     const images = params?.prompt?.images || [];
+    const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB cap before decode
     if (images.length && typeof images[0] === "string") {
-      try { targetBuf = Buffer.from(images[0].replace(/^data:[^,]*,/, ""), "base64"); } catch {}
+      const b64 = images[0].replace(/^data:[^,]*,/, "");
+      if (b64.length * 0.75 > MAX_IMAGE_BYTES) {
+        send({ type: "variantError", value: "Screenshot too large (max 20 MB).", variantIndex: 0 });
+        return ws.close(CLOSE_APP_ERROR);
+      }
+      try { targetBuf = Buffer.from(b64, "base64"); } catch {}
     }
 
     // Create needs a screenshot. Update can proceed from existing code alone.
     if (!isUpdate && !targetBuf) {
       send({ type: "variantError", value: "No screenshot provided.", variantIndex: 0 });
-      return ws.close(CLOSE_OK);
+      return ws.close(CLOSE_APP_ERROR);
     }
     if (isUpdate && !seedHtml) {
       send({ type: "variantError", value: "Update requested but no existing code was provided.", variantIndex: 0 });
-      return ws.close(CLOSE_OK);
+      return ws.close(CLOSE_APP_ERROR);
     }
 
     const stack = params.generatedCodeConfig || "html_tailwind";
@@ -198,6 +209,9 @@ wss.on("connection", (ws) => {
     procs.push(proc);
 
     let buf = "";
+    let finished = false; // guard: proc can emit both "error" then "close"; call finishOne only once
+    const finishVariant = () => { if (!finished) { finished = true; finishOne(); } };
+
     proc.stdout.on("data", (d) => {
       buf += d.toString();
       let nl;
@@ -213,7 +227,7 @@ wss.on("connection", (ws) => {
       clearInterval(poll);
       if (closed) return;
       send({ type: "variantError", value: `Failed to start claude CLI: ${e.message}`, variantIndex: vi });
-      finishOne();
+      finishVariant();
     });
 
     proc.on("close", (code) => {
@@ -225,10 +239,11 @@ wss.on("connection", (ws) => {
         }
       } catch {}
       if (closed) return;
-      const produced = fs.existsSync(outFile) && fs.statSync(outFile).size > 0;
+      let produced = false;
+      try { produced = fs.existsSync(outFile) && fs.statSync(outFile).size > 0; } catch {}
       if (code === 0 || produced) send({ type: "variantComplete", variantIndex: vi });
       else send({ type: "variantError", value: `Agent exited (code ${code}) with no output.`, variantIndex: vi });
-      finishOne();
+      finishVariant();
     });
   }
 
