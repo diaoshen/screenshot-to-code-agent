@@ -1,0 +1,20 @@
+{
+  "name": "screenshot-to-code-agent-backend",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CLI-driven (Claude Pro Max) iterative screenshot-to-code backend. Speaks the abi/screenshot-to-code frontend WebSocket protocol.",
+  "scripts": {
+    "start": "node server.js",
+    "test:render": "node render.mjs",
+    "test:loop": "node test-loop.mjs",
+    "sample": "node make-sample.mjs"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0",
+    "playwright": "^1.47.0",
+    "sharp": "^0.33.5",
+    "pixelmatch": "^5.3.0",
+    "pngjs": "^7.0.0"
+  }
+}
