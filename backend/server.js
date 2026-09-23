@@ -127,6 +127,7 @@ wss.on("connection", (ws) => {
     if (images.length && typeof images[0] === "string") {
       const b64 = images[0].replace(/^data:[^,]*,/, "");
       if (b64.length * 0.75 > MAX_IMAGE_BYTES) {
+        send({ type: "variantCount", value: "1" });
         send({ type: "variantError", value: "Screenshot too large (max 20 MB).", variantIndex: 0 });
         return ws.close(CLOSE_APP_ERROR);
       }
@@ -135,10 +136,12 @@ wss.on("connection", (ws) => {
 
     // Create needs a screenshot. Update can proceed from existing code alone.
     if (!isUpdate && !targetBuf) {
+      send({ type: "variantCount", value: "1" });
       send({ type: "variantError", value: "No screenshot provided.", variantIndex: 0 });
       return ws.close(CLOSE_APP_ERROR);
     }
     if (isUpdate && !seedHtml) {
+      send({ type: "variantCount", value: "1" });
       send({ type: "variantError", value: "Update requested but no existing code was provided.", variantIndex: 0 });
       return ws.close(CLOSE_APP_ERROR);
     }
@@ -255,16 +258,19 @@ wss.on("connection", (ws) => {
 
     proc.on("close", (code) => {
       clearInterval(poll);
+      // Flush any stdout that didn't end with a newline (the last JSON line from
+      // claude --output-format stream-json is sometimes not newline-terminated).
+      if (buf.trim()) { try { handleLine(buf.trim(), vi); } catch {} }
+      buf = "";
+      // Bail out early if the socket is already closed or proc.on('error') already
+      // reported this variant — avoids a stale setCode send and duplicate messages.
+      if (closed || finished) { finishVariant(); return; }
       try {
         if (fs.existsSync(outFile)) {
           const c = fs.readFileSync(outFile, "utf8");
           if (c) send({ type: "setCode", value: c, variantIndex: vi });
         }
       } catch {}
-      if (closed) return;
-      // If proc.on('error') already fired for this variant, 'finished' is true.
-      // Skip the duplicate variantError send — the error was already reported.
-      if (finished) { finishVariant(); return; }
       let produced = false;
       try { produced = fs.existsSync(outFile) && fs.statSync(outFile).size > 0; } catch {}
       if (code === 0 || produced) send({ type: "variantComplete", variantIndex: vi });

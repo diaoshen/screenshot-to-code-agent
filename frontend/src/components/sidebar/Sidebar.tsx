@@ -231,17 +231,20 @@ function Sidebar({
     }
   }, []);
 
-  // Focus on the update instruction textarea when a variant is complete
+  // Focus on the update instruction textarea when a variant is complete.
+  // Skip when viewing an older version — the sidebar is in read-only mode there
+  // and stealing focus is disorienting (user just navigated to a historical entry).
   useEffect(() => {
     if (
       (appState === AppState.CODE_READY || isSelectedVariantComplete) &&
+      !isViewingOlderVersion &&
       textareaRef.current
     ) {
       const el = textareaRef.current;
       el.focus();
       el.setSelectionRange(el.value.length, el.value.length);
     }
-  }, [appState, isSelectedVariantComplete]);
+  }, [appState, isSelectedVariantComplete, isViewingOlderVersion]);
 
   // Focus the textarea when an element is selected in the preview
   useEffect(() => {

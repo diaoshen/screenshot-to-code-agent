@@ -82,7 +82,7 @@ function Variants() {
 
   const commit = head ? commits[head] : null;
   const variants = commit?.variants || [];
-  const selectedVariantIndex = commit?.selectedVariantIndex || 0;
+  const selectedVariantIndex = commit?.selectedVariantIndex ?? 0;
   const generationType: "create" | "update" =
     commit?.type === "ai_create" ? "create" : "update";
 

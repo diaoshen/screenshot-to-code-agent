@@ -96,6 +96,10 @@ export function generateCode(
     } else if (response.type === "variantComplete") {
       callbacks.onVariantComplete(response.variantIndex);
     } else if (response.type === "variantError") {
+      // Mark errorToastShown so that if all variants error and the backend closes
+      // with CLOSE_OK (1000), the close handler routes to onCancel('request_failed')
+      // rather than onComplete(). Also prevents a duplicate toast from CLOSE_APP_ERROR.
+      errorToastShown = true;
       callbacks.onVariantError(response.variantIndex, response.value || "");
     } else if (response.type === "variantCount") {
       callbacks.onVariantCount(parseInt(response.value || "1"));

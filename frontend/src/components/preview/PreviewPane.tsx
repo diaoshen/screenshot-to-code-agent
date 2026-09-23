@@ -64,14 +64,20 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
 
   const currentCommit = head && commits[head] ? commits[head] : "";
   const currentCode = currentCommit
-    ? currentCommit.variants[currentCommit.selectedVariantIndex].code
+    ? (currentCommit.variants[currentCommit.selectedVariantIndex]?.code ?? "")
     : "";
 
   const isSelectedVariantComplete =
     head &&
     commits[head] &&
-    commits[head].variants[commits[head].selectedVariantIndex].status ===
+    commits[head].variants[commits[head].selectedVariantIndex]?.status ===
       "complete";
+
+  const isSelectedVariantError =
+    head &&
+    commits[head] &&
+    commits[head].variants[commits[head].selectedVariantIndex]?.status ===
+      "error";
 
   const previewCode =
     inputMode === "video" && appState === AppState.CODING
@@ -86,8 +92,12 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
     !previewCode.trim() &&
     !!sourceImage;
 
+  // Don't allow select-and-edit on an errored variant (empty preview) or
+  // during CODING (the update prompt is hidden, so selection can't be acted on).
   const canSelectAndEdit =
-    appState === AppState.CODE_READY || !!isSelectedVariantComplete;
+    (appState === AppState.CODE_READY || !!isSelectedVariantComplete) &&
+    !isSelectedVariantError &&
+    appState !== AppState.CODING;
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -204,7 +214,8 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
               (activeTab === "desktop" || activeTab === "mobile") && (
                 <SelectAndEditToolbarButton />
               )}
-            {(appState === AppState.CODE_READY || isSelectedVariantComplete) && (
+            {(appState === AppState.CODE_READY || isSelectedVariantComplete) &&
+              !isSelectedVariantError && (
               <Button
                 onClick={() => downloadCode(previewCode)}
                 variant="ghost"

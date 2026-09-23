@@ -298,9 +298,12 @@ function App() {
   };
 
   // User-initiated cancel (from the "Cancel All Generations" button in Sidebar).
-  // Shows a toast — use cancelCodeGeneration() directly for programmatic cancels.
+  // Shows a toast only when a socket is actually open — use cancelCodeGeneration()
+  // directly for programmatic cancels (reset, retry) which need no user feedback.
   const cancelCodeGenerationUserInitiated = () => {
-    toast.success("Code generation cancelled");
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      toast.success("Code generation cancelled");
+    }
     wsRef.current?.close?.(USER_CLOSE_WEB_SOCKET_CODE);
   };
 
@@ -552,6 +555,12 @@ function App() {
         if (lastAssistant && lastAssistant !== eventId) {
           finishAssistantEvent(variantIndex, "complete");
         }
+        // Close the previous tool event before starting a new one — the backend
+        // never sends toolResult, so without this earlier tools stay "running" forever.
+        const lastTool = lastToolEventIdRef.current[variantIndex];
+        if (lastTool && lastTool !== eventId) {
+          finishToolEvent(variantIndex, "complete");
+        }
         startAgentEvent(commit.hash, variantIndex, {
           id: eventId,
           type: "tool",
@@ -585,9 +594,10 @@ function App() {
         // Guard 2: superseded by a newer generation — let the new one own state.
         if (generationIdRef.current !== generationId) return;
 
-        if ((reason === "request_failed" || reason === "connection_error") && commit.type === "ai_create") {
-          const latestCreateCommit = useProjectStore.getState().commits[commit.hash];
-          latestCreateCommit?.variants.forEach((variant, variantIndex) => {
+        if (reason === "request_failed" || reason === "connection_error") {
+          // Mark any still-generating variants as failed.
+          const latestCommit = useProjectStore.getState().commits[commit.hash];
+          latestCommit?.variants.forEach((variant, variantIndex) => {
             if (variant.status === "generating") {
               updateVariantStatus(
                 commit.hash,
@@ -597,18 +607,17 @@ function App() {
               );
             }
           });
-          // If no variant produced any code at all, going to CODE_READY would
-          // leave the user with an empty, broken editor. Reset to INITIAL so
-          // they can start fresh from the landing screen.
+          // If at least one variant produced code, keep the commit and let the
+          // user see the partial result (applies to both ai_create and ai_edit).
           const anyCodeProduced = useProjectStore
             .getState()
             .commits[commit.hash]?.variants.some((v) => v.code.trim().length > 0);
-          if (!anyCodeProduced) {
-            reset();
+          if (anyCodeProduced) {
+            setAppState(AppState.CODE_READY);
             return;
           }
-          setAppState(AppState.CODE_READY);
-          return;
+          // No code at all — revert. For ai_create this resets to INITIAL;
+          // for ai_edit this removes the failing edit and reverts head to the parent.
         }
 
         cancelCodeGenerationAndReset(commit);
@@ -626,7 +635,9 @@ function App() {
           .getState()
           .commits[commit.hash]?.variants.some((v) => v.code.trim().length > 0);
         if (!anyCodeProduced) {
-          reset();
+          // For ai_edit: remove the failing edit and revert to parent (don't wipe all history).
+          // For ai_create: reset to INITIAL (nothing to preserve).
+          cancelCodeGenerationAndReset(commit);
           return;
         }
         setAppState(AppState.CODE_READY);

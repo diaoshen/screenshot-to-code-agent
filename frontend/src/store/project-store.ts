@@ -170,6 +170,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return state;
       }
       const variant = commit.variants[numVariant];
+      if (!variant) return state; // bounds check: ignore out-of-range variant index
       const isFirstCode = !variant.code && variant.thinkingStartTime;
       const duration = isFirstCode
         ? Math.round((Date.now() - variant.thinkingStartTime!) / 1000)
@@ -260,7 +261,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   updateSelectedVariantIndex: (hash: CommitHash, index: number) =>
     set((state) => {
       const commit = state.commits[hash];
-      if (!commit || commit.isCommitted) return state;
+      if (!commit) return state;
+      // isCommitted guard intentionally absent: switching variants is a display-only
+      // action and must work on historical (committed) commits in the version history.
 
       // Just update the selected variant index without canceling other variants
       // This allows users to switch between variants even while they're still generating
@@ -414,7 +417,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   finishAgentEvent: (hash, numVariant, eventId, updates) =>
     set((state) => {
       const commit = state.commits[hash];
-      if (!commit || commit.isCommitted) return state;
+      if (!commit) return state;
+      // isCommitted guard intentionally absent: closing a running event is a safe
+      // idempotent write that must complete even after addCommit marks the commit.
       const variants = commit.variants.map((variant, index) => {
         if (index !== numVariant) return variant;
         const events = variant.agentEvents || [];
