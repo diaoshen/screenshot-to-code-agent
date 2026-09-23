@@ -73,7 +73,17 @@ export function getVariantLabel(
   const showLabels =
     context.generationType === "create" || context.inputMode === "video";
   if (!showLabels) return null;
-  return VARIANT_LABELS[model as CodeGenerationModel] ?? null;
+
+  // Exact match first (original model enum values).
+  const exact = VARIANT_LABELS[model as CodeGenerationModel];
+  if (exact) return exact;
+
+  // Substring fallback for Claude Code CLI variant labels (e.g. "opus · Claude Code (Pro Max)").
+  const lower = model.toLowerCase();
+  if (lower.includes("opus")) return { text: "Max", tone: "max" };
+  if (lower.includes("sonnet")) return { text: "Fast", tone: "fast" };
+
+  return null;
 }
 
 // Will generate a static error if a model in the enum above is not in the descriptions

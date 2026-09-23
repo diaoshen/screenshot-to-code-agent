@@ -61,6 +61,10 @@ export function generateCode(
   const ws = new WebSocket(wsUrl);
   wsRef.current = ws;
 
+  // Guard: the "error" event always fires before "close" on a failed connection,
+  // so track whether we already showed an error toast to avoid doubling up.
+  let errorToastShown = false;
+
   ws.addEventListener("open", () => {
     ws.send(JSON.stringify(params));
   });
@@ -91,6 +95,7 @@ export function generateCode(
       callbacks.onToolResult(response.data, response.variantIndex, response.eventId);
     } else if (response.type === "error") {
       console.error("Error generating code", response.value);
+      errorToastShown = true; // prevent the close handler from double-toasting
       toast.error(response.value || ERROR_MESSAGE);
     }
   });
@@ -102,10 +107,19 @@ export function generateCode(
       callbacks.onCancel("user_cancelled");
     } else if (event.code === APP_ERROR_WEB_SOCKET_CODE) {
       console.error("Known server error", event);
+      // Show a toast so the user knows the generation failed (the close reason
+      // carries the short error text; fall back to the generic message).
+      if (!errorToastShown) {
+        errorToastShown = true;
+        toast.error(event.reason || ERROR_MESSAGE);
+      }
       callbacks.onCancel("request_failed", event.reason || ERROR_MESSAGE);
     } else if (event.code !== 1000) {
       console.error("Unknown server or connection error", event);
-      toast.error(ERROR_MESSAGE);
+      if (!errorToastShown) {
+        errorToastShown = true;
+        toast.error(ERROR_MESSAGE);
+      }
       callbacks.onCancel("connection_error", event.reason || ERROR_MESSAGE);
     } else {
       callbacks.onComplete();
@@ -114,6 +128,9 @@ export function generateCode(
 
   ws.addEventListener("error", (error) => {
     console.error("WebSocket error", error);
-    toast.error(ERROR_MESSAGE);
+    if (!errorToastShown) {
+      errorToastShown = true;
+      toast.error(ERROR_MESSAGE);
+    }
   });
 }

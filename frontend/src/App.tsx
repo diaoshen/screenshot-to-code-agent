@@ -336,10 +336,9 @@ function App() {
       designSystem: selectedDesignSystem?.content ?? null,
     };
 
-    // Use 4 variants for create, 2 for edits to match backend counts
-    // and avoid a flash when the backend sends the actual variant count
-    const initialVariantCount =
-      requestParams.generationType === "create" ? 4 : 2;
+    // Use 2 variants for both create and edit — matches our 2-variant backend
+    // (opus + sonnet) and avoids a 4→2 flash when the backend sends variantCount.
+    const initialVariantCount = 2;
     const baseCommitObject = {
       variants: Array(initialVariantCount)
         .fill(null)

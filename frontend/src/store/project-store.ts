@@ -187,10 +187,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   appendVariantThinking: (hash: CommitHash, numVariant: number, thinking: string) =>
     set((state) => {
       const commit = state.commits[hash];
-      // Don't update if the commit is already committed
-      if (commit.isCommitted) {
-        throw new Error("Attempted to append thinking to a committed commit");
-      }
+      if (!commit) return state;
+      // Silently drop late-arriving thinking content on committed commits.
+      if (commit.isCommitted) return state;
       return {
         commits: {
           ...state.commits,
@@ -257,12 +256,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   updateSelectedVariantIndex: (hash: CommitHash, index: number) =>
     set((state) => {
       const commit = state.commits[hash];
-      // Don't update if the commit is already committed
-      if (commit.isCommitted) {
-        throw new Error(
-          "Attempted to update selected variant index of a committed commit"
-        );
-      }
+      if (!commit || commit.isCommitted) return state;
 
       // Just update the selected variant index without canceling other variants
       // This allows users to switch between variants even while they're still generating
