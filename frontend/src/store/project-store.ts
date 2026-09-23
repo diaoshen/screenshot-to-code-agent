@@ -144,13 +144,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const newCommits = { ...state.commits };
       delete newCommits[hash];
 
+      const fallback = removedCommit?.parentHash ?? null;
+
       // If removing the latest commit, fall back to its parent
       const newLatestCommitHash =
-        state.latestCommitHash === hash
-          ? (removedCommit?.parentHash ?? null)
-          : state.latestCommitHash;
+        state.latestCommitHash === hash ? fallback : state.latestCommitHash;
 
-      return { commits: newCommits, latestCommitHash: newLatestCommitHash };
+      // If head is pointing at the removed commit, move it to the parent
+      // atomically so there is never a window where head references a missing commit.
+      const newHead = state.head === hash ? fallback : state.head;
+
+      return { commits: newCommits, latestCommitHash: newLatestCommitHash, head: newHead };
     });
   },
   resetCommits: () => set({ commits: {}, latestCommitHash: null }),
@@ -305,7 +309,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   resizeVariants: (hash: CommitHash, count: number) =>
     set((state) => {
       const commit = state.commits[hash];
-      if (!commit) return state; // No change if commit doesn't exist
+      if (!commit) return state;
+      if (commit.isCommitted) return state;
 
       // Resize variants array to match backend count
       const currentVariants = commit.variants;

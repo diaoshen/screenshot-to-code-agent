@@ -151,6 +151,7 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
                   size="icon"
                   title="Open in New Tab"
                   className="h-8 w-8"
+                  disabled={!previewCode.trim()}
                 >
                   <LuExternalLink />
                 </Button>
@@ -166,8 +167,8 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
                 variant="ghost"
                 size="icon"
                 title="Previous version"
-                className={`h-6 w-6 rounded-full hover:bg-white dark:hover:bg-zinc-700 ${!canGoPrev ? "opacity-30 cursor-not-allowed" : ""}`}
-                disabled={!canGoPrev}
+                className={`h-6 w-6 rounded-full hover:bg-white dark:hover:bg-zinc-700 ${!canGoPrev || appState === AppState.CODING ? "opacity-30 cursor-not-allowed" : ""}`}
+                disabled={!canGoPrev || appState === AppState.CODING}
               >
                 <LuChevronLeft className="w-3.5 h-3.5" />
               </Button>
@@ -190,8 +191,8 @@ function PreviewPane({ settings, onOpenVersions }: Props) {
                 variant="ghost"
                 size="icon"
                 title="Next version"
-                className={`h-6 w-6 rounded-full hover:bg-white dark:hover:bg-zinc-700 ${!canGoNext ? "opacity-30 cursor-not-allowed" : ""}`}
-                disabled={!canGoNext}
+                className={`h-6 w-6 rounded-full hover:bg-white dark:hover:bg-zinc-700 ${!canGoNext || appState === AppState.CODING ? "opacity-30 cursor-not-allowed" : ""}`}
+                disabled={!canGoNext || appState === AppState.CODING}
               >
                 <LuChevronRight className="w-3.5 h-3.5" />
               </Button>

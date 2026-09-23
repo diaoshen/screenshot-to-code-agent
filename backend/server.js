@@ -48,6 +48,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/generate-code" });
 
 let sessionCounter = 0;
+let _eventCounter = 0; // unique fallback for eventIds when the CLI omits an ID
 const MAX_CONCURRENT_SOCKETS = Number(process.env.MAX_CONCURRENT_SOCKETS || 10);
 
 wss.on("connection", (ws) => {
@@ -59,15 +60,31 @@ wss.on("connection", (ws) => {
   const timers = [];
   let started = false;
   let closed = false;
+  let sessionBaseDir = null; // set once run() creates it; cleaned up on close
 
   const send = (obj) => {
     if (ws.readyState === ws.OPEN) {
       try { ws.send(JSON.stringify(obj)); } catch {}
     }
   };
+  const killProc = (p) => {
+    if (!p || p.killed) return;
+    try {
+      // Kill the entire process group so grandchildren (e.g. Playwright Chromium
+      // spawned by render.mjs) also receive SIGKILL. detached:true on spawn puts
+      // claude and its descendants in their own process group (pgid = proc.pid).
+      if (p.pid) process.kill(-p.pid, "SIGKILL");
+    } catch {}
+  };
+
   const cleanup = () => {
     timers.forEach((t) => { clearInterval(t); clearTimeout(t); });
-    procs.forEach((p) => { if (p && !p.killed) { try { p.kill("SIGKILL"); } catch {} } });
+    procs.forEach(killProc);
+    // Remove the session work dir once the socket is done to prevent disk fill.
+    if (sessionBaseDir) {
+      try { fs.rmSync(sessionBaseDir, { recursive: true, force: true }); } catch {}
+      sessionBaseDir = null;
+    }
   };
 
   ws.on("close", () => { closed = true; cleanup(); });
@@ -96,6 +113,7 @@ wss.on("connection", (ws) => {
     const id = `sess-${Date.now()}-${++sessionCounter}`;
     const baseDir = path.join(WORK_ROOT, id);
     fs.mkdirSync(baseDir, { recursive: true });
+    sessionBaseDir = baseDir; // tracked for cleanup on WS close
 
     const isUpdate = params.generationType === "update";
     const instruction = params?.prompt?.text || params?.prompt?.fullText || "";
@@ -142,7 +160,7 @@ wss.on("connection", (ws) => {
 
     // Hard wall-clock timeout kills every variant.
     const killTimer = setTimeout(() => {
-      procs.forEach((p) => { if (p && !p.killed) { try { p.kill("SIGKILL"); } catch {} } });
+      procs.forEach(killProc);
     }, HARD_TIMEOUT_MS);
     timers.push(killTimer);
 
@@ -205,7 +223,9 @@ wss.on("connection", (ws) => {
       "--dangerously-skip-permissions",
     ];
     // stdin 'ignore' so `claude -p` doesn't wait 3s for piped stdin that never comes.
-    const proc = spawn("claude", args, { cwd: dir, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    // detached:true puts claude and all its children in a new process group so that
+    // killProc() can SIGKILL the whole group (including Playwright Chromium) atomically.
+    const proc = spawn("claude", args, { cwd: dir, env: process.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     procs.push(proc);
 
     let buf = "";
@@ -256,9 +276,9 @@ wss.on("connection", (ws) => {
       if (ev.type === "assistant" && ev.message?.content) {
         for (const b of ev.message.content) {
           if (b.type === "text" && b.text?.trim()) {
-            send({ type: "assistant", value: b.text, variantIndex: vi, eventId: ev.message.id || "a" });
+            send({ type: "assistant", value: b.text, variantIndex: vi, eventId: ev.message.id || `asst-${vi}-${++_eventCounter}` });
           } else if (b.type === "tool_use") {
-            send({ type: "toolStart", data: { name: b.name, input: summarizeToolInput(b.name, b.input) }, variantIndex: vi, eventId: b.id || "t" });
+            send({ type: "toolStart", data: { name: b.name, input: summarizeToolInput(b.name, b.input) }, variantIndex: vi, eventId: b.id || `tool-${vi}-${++_eventCounter}` });
           }
         }
       }

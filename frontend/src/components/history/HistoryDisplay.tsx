@@ -1,5 +1,7 @@
 import { renderHistory, RenderedHistoryItem } from "./utils";
 import { useProjectStore } from "../../store/project-store";
+import { useAppStore } from "../../store/app-store";
+import { AppState } from "../../types";
 import { BsChevronDown, BsChevronRight } from "react-icons/bs";
 import { useState, useRef, useEffect, useCallback } from "react";
 
@@ -109,6 +111,7 @@ function ExpandedMedia({
 
 export default function HistoryDisplay() {
   const { commits, head, setHead } = useProjectStore();
+  const { appState } = useAppStore();
   const [expandedHash, setExpandedHash] = useState<string | null>(null);
   const [autoPlayHash, setAutoPlayHash] = useState<string | null>(null);
 
@@ -154,7 +157,10 @@ export default function HistoryDisplay() {
           >
             <div
               className="flex items-center gap-3 px-3 py-2.5 cursor-pointer"
-              onClick={() => setHead(item.hash)}
+              onClick={() => {
+                if (appState === AppState.CODING) return;
+                setHead(item.hash);
+              }}
             >
               {/* Version number badge */}
               <span

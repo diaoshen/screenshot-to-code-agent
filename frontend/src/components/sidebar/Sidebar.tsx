@@ -206,21 +206,21 @@ function Sidebar({
   const isSelectedVariantComplete =
     head &&
     commits[head] &&
-    commits[head].variants[commits[head].selectedVariantIndex].status ===
+    commits[head].variants[commits[head].selectedVariantIndex]?.status ===
       "complete";
 
   // Check if the currently selected variant has an error
   const isSelectedVariantError =
     head &&
     commits[head] &&
-    commits[head].variants[commits[head].selectedVariantIndex].status ===
+    commits[head].variants[commits[head].selectedVariantIndex]?.status ===
       "error";
 
   // Get the error message from the selected variant
   const selectedVariantErrorMessage =
     head &&
     commits[head] &&
-    commits[head].variants[commits[head].selectedVariantIndex].errorMessage;
+    commits[head].variants[commits[head].selectedVariantIndex]?.errorMessage;
 
   // Auto-resize textarea to fit content
   const autoResize = useCallback(() => {
@@ -287,6 +287,15 @@ function Sidebar({
     const intervalId = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(intervalId);
   }, [appState]);
+
+  // Clear isDragging if the drag is cancelled (Escape key, drop outside the window, etc.)
+  // The onDragLeave guard only fires when the cursor leaves the element; window-level
+  // dragend is the reliable signal that the drag session has ended regardless of outcome.
+  useEffect(() => {
+    const clearDrag = () => setIsDragging(false);
+    window.addEventListener("dragend", clearDrag);
+    return () => window.removeEventListener("dragend", clearDrag);
+  }, []);
 
 
   return (
@@ -427,6 +436,7 @@ function Sidebar({
         {canRegenerate &&
           (appState === AppState.CODE_READY ||
             (head === latestCommitHash &&
+              appState !== AppState.CODING &&
               (isSelectedVariantComplete || isSelectedVariantError))) && (
           <div className="mb-3 flex items-center justify-end gap-2">
             {totalGenerationTime && (
@@ -494,7 +504,8 @@ function Sidebar({
       </div>
 
       {/* Pinned bottom: prompt box + option selector */}
-      {(appState === AppState.CODE_READY || isSelectedVariantComplete) &&
+      {(appState === AppState.CODE_READY ||
+        (isSelectedVariantComplete && appState !== AppState.CODING)) &&
         !isSelectedVariantError && (
           <div
             className="shrink-0 border-t border-gray-200 bg-gray-50 dark:border-zinc-800 dark:bg-zinc-900 px-4 py-4"

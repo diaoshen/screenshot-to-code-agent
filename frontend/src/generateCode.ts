@@ -48,6 +48,9 @@ interface CodeGenerationCallbacks {
     errorMessage?: string
   ) => void;
   onComplete: () => void;
+  // Called when user explicitly cancelled (close code 4333). Defaults to
+  // showing a "cancelled" toast; pass false to suppress for programmatic cancels.
+  showCancelToast?: boolean;
 }
 
 export function generateCode(
@@ -57,6 +60,13 @@ export function generateCode(
 ) {
   const wsUrl = `${WS_BACKEND_URL}/generate-code`;
   console.log("Connecting to backend @ ", wsUrl);
+
+  // Close any prior socket before opening a new one. Without this, a doUpdate
+  // call while a prior generation is still live would orphan the old socket,
+  // leaving it open and consuming a server slot against MAX_CONCURRENT_SOCKETS.
+  if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
+    wsRef.current.close(USER_CLOSE_WEB_SOCKET_CODE);
+  }
 
   const ws = new WebSocket(wsUrl);
   wsRef.current = ws;
@@ -103,7 +113,7 @@ export function generateCode(
   ws.addEventListener("close", (event) => {
     console.log("Connection closed", event.code, event.reason);
     if (event.code === USER_CLOSE_WEB_SOCKET_CODE) {
-      toast.success(CANCEL_MESSAGE);
+      if (callbacks.showCancelToast !== false) toast.success(CANCEL_MESSAGE);
       callbacks.onCancel("user_cancelled");
     } else if (event.code === APP_ERROR_WEB_SOCKET_CODE) {
       console.error("Known server error", event);

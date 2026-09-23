@@ -110,6 +110,11 @@ function App() {
   );
 
   const wsRef = useRef<WebSocket>(null);
+  // Each call to doGenerateCode stamps a monotonically increasing ID. The
+  // onComplete/onCancel callbacks capture their own ID and bail out if a newer
+  // generation has already started — preventing a stale WS from flipping
+  // AppState back to CODE_READY after a subsequent generation begins.
+  const generationIdRef = useRef(0);
   const lastThinkingEventIdRef = useRef<Record<number, string>>({});
   const lastAssistantEventIdRef = useRef<Record<number, string>>({});
   const lastToolEventIdRef = useRef<Record<number, string>>({});
@@ -317,6 +322,10 @@ function App() {
     params: GenerationRequest,
     generationParentHash: string | null = head
   ) {
+    // Stamp this generation so stale close events from a previous WS can't
+    // flip AppState after a subsequent generation has already started.
+    const generationId = ++generationIdRef.current;
+
     // Reset the execution console
     resetExecutionConsoles();
 
@@ -412,6 +421,23 @@ function App() {
       Object.keys(lastToolEventIdRef.current).forEach((key) => {
         finishToolEvent(Number(key), status);
       });
+      // The lastToolEventIdRef only tracks the MOST RECENT tool event per variant.
+      // Earlier tool events in a multi-tool sequence get displaced when a new
+      // toolStart arrives. Scan all agentEvents in the commit and close any that
+      // are still "running" so they don't show as eternally in-flight in the UI.
+      const latestCommit = useProjectStore.getState().commits[commit.hash];
+      if (latestCommit) {
+        latestCommit.variants.forEach((variant, variantIndex) => {
+          (variant.agentEvents || []).forEach((event) => {
+            if (event.status === "running") {
+              finishAgentEvent(commit.hash, variantIndex, event.id, {
+                status,
+                endedAt: Date.now(),
+              });
+            }
+          });
+        });
+      }
     };
 
     generateCode(wsRef, updatedParams, {
@@ -530,9 +556,10 @@ function App() {
         }
       },
       onCancel: (reason, errorMessage) => {
-        // The project may have been reset while this generation was still in
-        // flight — a stale cancellation must not mutate app state.
+        // Guard 1: project reset — commits are cleared; bail out.
         if (!useProjectStore.getState().commits[commit.hash]) return;
+        // Guard 2: superseded by a newer generation — let the new one own state.
+        if (generationIdRef.current !== generationId) return;
 
         // Close any running agent events when the socket ends without per-event
         // terminal messages, otherwise they remain stuck in "running" state.
@@ -550,6 +577,16 @@ function App() {
               );
             }
           });
+          // If no variant produced any code at all, going to CODE_READY would
+          // leave the user with an empty, broken editor. Reset to INITIAL so
+          // they can start fresh from the landing screen.
+          const anyCodeProduced = useProjectStore
+            .getState()
+            .commits[commit.hash]?.variants.some((v) => v.code.trim().length > 0);
+          if (!anyCodeProduced) {
+            reset();
+            return;
+          }
           setAppState(AppState.CODE_READY);
           return;
         }
@@ -557,12 +594,17 @@ function App() {
         cancelCodeGenerationAndReset(commit);
       },
       onComplete: () => {
-        // Same guard as onCancel: a generation finishing after its project
-        // was reset must not pull the app back into the editor.
+        // Guard 1: project reset.
         if (!useProjectStore.getState().commits[commit.hash]) return;
+        // Guard 2: a newer generation has already started; don't override its state.
+        if (generationIdRef.current !== generationId) return;
         finishInFlightEvents("complete");
         setAppState(AppState.CODE_READY);
       },
+      // Suppress the "Code generation cancelled" toast for programmatic cancels
+      // (e.g. reset() called by Retry/New Project). The user knows they clicked
+      // those buttons; the toast adds confusion rather than information.
+      showCancelToast: false,
     });
   }
 
